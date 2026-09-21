@@ -82,7 +82,8 @@ Screens that turn off mid-piece are a problem, so the page tries to prevent it a
   `http://` to an IP address it is not available.
 - Fallback: a muted, full-screen, background-coloured video loops behind the page.
 
-The bottom-right of the page says which one is active, or shows a warning if neither is. The most
+The video fallback kept the screen awake in testing on an iPad (Safari) and an Android phone
+(Chrome). The bottom-right of the page says which method is active, or shows a warning if neither is. The most
 reliable fix is still the phone's own setting (iOS: Display & Brightness > Auto-Lock > Never;
 Android: Screen timeout). On Android Chrome you can also force the real Wake Lock API for the
 host's address: open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, add
@@ -106,8 +107,9 @@ Add to the end of the phone's URL:
 ## About this code
 
 Written entirely with [Claude Code](https://claude.com/claude-code) (AI-generated, "vibe coded"),
-directed and tested by a human on real phones and tablets. It has been tried on an iPad and an
-Android phone. Expect rough edges, and test on your own devices before relying on it on stage.
+directed and tested by a human on real devices: an iPad (Safari) and an Android phone (Chrome),
+where the beat display and the keep-awake fallback worked in testing. Other devices and browsers
+are untested. Expect rough edges, and test on your own devices before relying on it on stage.
 
 ## License
 
