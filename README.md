@@ -7,6 +7,11 @@ headphones. Visual only: no audio is sent anywhere.
 A host (a Mac, or any machine that runs Node) sends beats over WebSocket to browsers on the same
 WiFi. Nothing to install on the phones: they just open a web page.
 
+![The display on a tablet: movement number, title, and measure / beat](docs/screenshot.png)
+
+Beat 1 of each measure is shown in bright white and the other beats in a dimmer gray, so the
+downbeat stands out at a glance.
+
 ## How it stays in sync
 
 The host sends each beat about 1 second *before* it is due, tagged with the host-clock time it is
@@ -97,6 +102,12 @@ Add to the end of the phone's URL:
     node tools/test-sched.js                             # jitter-buffer logic on a simulated network
     node server.js                                       # then press Enter to start playback
     node tools/simclient.js --seconds 20 --jitter 250    # fake phones against the running host
+
+## About this code
+
+Written entirely with [Claude Code](https://claude.com/claude-code) (AI-generated, "vibe coded"),
+directed and tested by a human on real phones and tablets. It has been tried on an iPad and an
+Android phone. Expect rough edges, and test on your own devices before relying on it on stage.
 
 ## License
 
