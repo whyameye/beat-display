@@ -1,0 +1,15 @@
+{
+  "name": "beat-display",
+  "version": "1.0.0",
+  "description": "Synced quartet beat display",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.21.3"
+  }
+}

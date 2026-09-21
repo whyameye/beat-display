@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Beat Display</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#111116">
+<style>
+  :root {
+    --bg: #111116;
+    --title: #b4b4be;      /* movement title */
+    --beat-on: #ffffff;    /* beat 1 (downbeat): brightest */
+    --beat-off: #9a9aa8;   /* beats 2, 3, 4… */
+    --ok: #4ade80;
+    --bad: #ff5c5c;
+
+    /* sizes: vw so it scales to any device, capped by vh so landscape phones still fit */
+    --digits: min(34vw, 52vh);
+    --title-size: min(8.5vw, 14vh);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); overflow: hidden; }
+  body {
+    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    font-weight: 800;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+  }
+  main {
+    position: relative; z-index: 1;
+    height: 100vh; height: 100dvh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 0 3vw;
+  }
+  main.stale { opacity: 0.3; }               /* don't let a dead connection look live */
+
+  #titlewrap { position: relative; width: 100%; }
+  /* movement number: hangs above the title without taking layout space, so nothing moves */
+  #mv {
+    position: absolute; left: 0; right: 0; bottom: 100%;
+    text-align: center; line-height: 1.1;
+    font-size: min(5.5vw, 9vh); color: var(--title);
+  }
+  #title {
+    width: 100%; text-align: center;
+    font-size: var(--title-size); line-height: 1.15;
+    color: var(--title);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;   /* long titles get cut off */
+    min-height: 1.15em;
+  }
+  #pos {
+    font-size: var(--digits); line-height: 1.05;
+    font-variant-numeric: tabular-nums; letter-spacing: 0.03em;
+    white-space: nowrap;
+    color: var(--beat-off);
+  }
+  #pos.down { color: var(--beat-on); }       /* beat 1 */
+  #pos.word { font-size: calc(var(--digits) * 0.6); color: var(--beat-off); letter-spacing: 0.04em; }
+
+  #status {
+    position: fixed; top: max(10px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left));
+    display: flex; align-items: center; gap: 8px; z-index: 2;
+    font-size: max(13px, 2.2vmin); font-weight: 600; color: #7c7c88;
+  }
+  #dot { width: 0.8em; height: 0.8em; border-radius: 50%; background: var(--bad); }
+  #status.ok #dot { background: var(--ok); }
+  #status.bad { color: var(--bad); font-weight: 800; }
+  #awake { position: fixed; bottom: max(10px, env(safe-area-inset-bottom)); right: 14px; z-index: 2;
+           font-size: max(12px, 2vmin); font-weight: 600; color: #7c7c88; text-align: right; }
+  #awake.warn { color: #ffb020; font-weight: 800; font-size: max(14px, 2.6vmin); }
+
+  /* Blocks everything until the first tap: the tap is what lets us start keeping the screen awake. */
+  #gate { position: fixed; inset: 0; z-index: 10; background: var(--bg);
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          text-align: center; padding: 6vw; }
+  #gate.hidden { display: none; }
+  #gatebtn { background: var(--ok); color: #062b12; font-weight: 800; font-size: min(10vw, 18vh);
+             padding: 0.3em 0.7em; border-radius: 0.3em; }
+  #gatesub { margin-top: 1.2em; color: var(--title); font-weight: 600; font-size: min(3.8vw, 6vh); }
+  #dbg { position: fixed; z-index: 2; left: 12px; bottom: 10px; font: 600 max(12px, 2vmin)/1.35 ui-monospace, Menlo, monospace;
+         color: #c8c86e; white-space: pre; display: none; }
+  /* Keep-awake video: full screen and background-coloured, behind everything. Browsers only
+     hold the screen on for a video that is really visible, so a hidden 1px one isn't enough. */
+  video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: fill;
+          z-index: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="status"><span id="dot"></span><span id="stxt">connecting…</span></div>
+<main id="main" class="stale">
+  <div id="titlewrap"><div id="mv"></div><div id="title"></div></div>
+  <div id="pos" class="word">—</div>
+</main>
+<div id="dbg"></div>
+<div id="awake"></div>
+<video id="nosleep" muted playsinline loop src="/nosleep.mp4"></video>
+<div id="gate">
+  <div id="gatebtn">TAP TO START</div>
+  <div id="gatesub">Tap anywhere once. This keeps the screen from turning off.</div>
+</div>
+
+<script src="/sched.js"></script>
+<script>
+'use strict';
+// Reactive display: it shows only what the host tells it, never advancing on its own.
+// The host sends each beat slightly early, tagged with the host time it is due; sched.js
+// holds it until then (a jitter buffer), so WiFi delays don't show up as stutter.
+// The interval timer further down only watches connection health.
+
+const $ = id => document.getElementById(id);
+const titleEl = $('title'), mvEl = $('mv'), posEl = $('pos'), mainEl = $('main');
+const statusEl = $('status'), stxt = $('stxt');
+
+// ---- display ----
+let shownTitle = null;
+
+function setTitle(t) {
+  t = t || '';
+  if (t === shownTitle) return;
+  shownTitle = t;
+  titleEl.textContent = t;
+  fitTitle();
+}
+// Shrink a long title a bit (down to 70%) before letting CSS cut it off.
+function fitTitle() {
+  titleEl.style.fontSize = '';
+  let size = parseFloat(getComputedStyle(titleEl).fontSize);
+  const min = size * 0.7;
+  while (titleEl.scrollWidth > titleEl.clientWidth && size > min) {
+    size -= 1;
+    titleEl.style.fontSize = size + 'px';
+  }
+}
+addEventListener('resize', fitTitle);
+
+function apply(m) {
+  mvEl.textContent = m.mv ? 'Movement: ' + m.mv : '';
+  if (m.state === 'start' || m.state === 'end') {
+    setTitle(m.state === 'start' ? m.title : '');
+    posEl.className = 'word';
+    posEl.textContent = m.state === 'start' ? 'START' : 'END';
+    return;
+  }
+  if (typeof m.measure !== 'number') return;
+  setTitle(m.title);
+  posEl.className = m.beat === 1 ? 'down' : '';
+  posEl.textContent = m.measure + ' / ' + m.beat;
+}
+
+// ---- jitter buffer ----
+const sched = createScheduler({
+  now: () => performance.now(),
+  setTimeout: (f, ms) => window.setTimeout(f, ms),
+  clearTimeout: id => window.clearTimeout(id),
+  show: apply,
+});
+
+// ---- ?debug: network timing overlay (measures only; never drives the display) ----
+const params = new URLSearchParams(location.search);
+const DEBUG = params.has('debug');
+const KA_MS = Number(params.get('ka') || 0);   // ?ka=50: send a tiny message to the host every 50 ms
+const dbgEl = $('dbg');
+function pctl(a, p) {
+  if (!a.length) return '-';
+  const s = a.slice().sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.floor(p * s.length))].toFixed(0);
+}
+function renderDebug() {
+  const st = sched.stats();
+  dbgEl.textContent =
+    'beats arrive early by ms   min ' + pctl(st.slack, 0) + '   median ' + pctl(st.slack, 0.5) + '   LATE: ' + st.late + ' of ' + st.n + '\n' +
+    'network delay above best   median ' + pctl(st.delay, 0.5) + '   95th ' + pctl(st.delay, 0.95) + '   worst ' + pctl(st.delay, 1) + ' ms\n' +
+    wakeInfo() + '\n' +
+    '(early margin must stay > 0; tap this text to reset)';
+}
+if (DEBUG) {
+  dbgEl.style.display = 'block';
+  dbgEl.addEventListener('pointerdown', () => { sched.resetStats(); renderDebug(); });
+}
+
+// ---- connection ----
+let ws = null, retry = null, lastRx = 0, connected = false;
+
+function setConn(state) {          // 'ok' | 'bad' | 'wait'
+  connected = state === 'ok';
+  statusEl.className = state === 'ok' ? 'ok' : state === 'bad' ? 'bad' : '';
+  stxt.textContent = state === 'ok' ? 'connected' : state === 'bad' ? 'DISCONNECTED — reconnecting…' : 'connecting…';
+  mainEl.classList.toggle('stale', state !== 'ok');
+}
+
+function connect() {
+  clearTimeout(retry);
+  const sock = new WebSocket('ws://' + location.host + '/ws');
+  ws = sock;
+  sock.onopen = () => { if (ws === sock) { sched.reset(); lastRx = performance.now(); setConn('ok'); } };
+  sock.onmessage = e => {
+    if (ws !== sock) return;
+    lastRx = performance.now();
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (typeof m.h === 'number') sched.observe(m.h);   // host clock sample
+    if (DEBUG) renderDebug();
+    if (m.hb) return;
+    if (m.cut !== undefined) sched.cut(m.cut);          // stop/jump/rewind
+    else if (m.at !== undefined) sched.enqueue(m);      // beat to show when host clock reaches m.at
+    else apply(m);                                      // show right now
+  };
+  const lost = () => {
+    if (ws !== sock) return;
+    setConn('bad');
+    clearTimeout(retry);
+    retry = setTimeout(connect, 1000);
+  };
+  sock.onclose = lost;
+  sock.onerror = lost;
+}
+
+// The host sends a heartbeat every 100 ms; if nothing arrives for 3 s the link is
+// dead even if the browser hasn't noticed (common when WiFi drops silently).
+setInterval(() => {
+  if (connected && performance.now() - lastRx > 3000) {
+    const old = ws; ws = null;
+    try { old.close(); } catch {}
+    setConn('bad');
+    connect();
+  }
+}, 1000);
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !connected) connect();
+});
+
+if (KA_MS > 0) setInterval(() => { if (connected) try { ws.send('.'); } catch {} }, KA_MS);
+
+setConn('wait');
+connect();
+
+// ---- keep the screen awake ----
+// 1. Wake Lock API: only exists on secure pages (https / localhost), so on plain http://
+//    to an IP address it is simply unavailable.
+// 2. Fallback: loop a muted, full-screen, background-coloured video (the usual trick).
+// Both need to be started from a user tap, hence the TAP TO START gate.
+// Most reliable of all: set the phone's Auto-Lock / Screen timeout to Never.
+const awakeEl = $('awake'), vid = $('nosleep'), gate = $('gate');
+let wakeLock = null, playErr = '';
+
+async function keepAwake() {
+  const playing = vid.play();                 // first, while we're still inside the tap
+  try {
+    if ('wakeLock' in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; showAwake(); });
+    }
+  } catch {}
+  try { await playing; playErr = ''; } catch (e) { playErr = (e && e.name) || 'play failed'; }
+  showAwake();
+}
+
+function showAwake() {
+  const how = wakeLock ? 'wake lock' : !vid.paused ? 'video' : '';
+  awakeEl.className = how ? '' : 'warn';
+  awakeEl.textContent = how
+    ? 'screen lock prevented (' + how + ')'
+    : 'SCREEN MAY SLEEP — set Auto-Lock / Screen timeout to Never';
+}
+vid.addEventListener('pause', () => { showAwake(); if (!document.hidden && gate.classList.contains('hidden')) vid.play().catch(() => {}); });
+vid.addEventListener('playing', showAwake);
+
+gate.addEventListener('pointerdown', () => { gate.classList.add('hidden'); keepAwake(); });
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && gate.classList.contains('hidden')) keepAwake();  // the OS drops the lock when hidden
+});
+if (params.has('nogate')) { gate.classList.add('hidden'); keepAwake(); }     // testing only
+else showAwake();
+
+function wakeInfo() {
+  return 'secure page: ' + isSecureContext + '  wakeLock API: ' + ('wakeLock' in navigator) +
+         '  lock: ' + (wakeLock ? 'held' : 'no') + '  video: ' + (vid.paused ? 'NOT playing' : 'playing') +
+         (vid.error ? '  video error ' + vid.error.code : '') + (playErr ? '  play() ' + playErr : '') + '  ready ' + vid.readyState;
+}
+</script>
+</body>
+</html>

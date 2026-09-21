@@ -1,0 +1,15 @@
+node_modules/
+npm-debug.log*
+*.log
+
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# local secrets, just in case
+.env
+.env.*
+
+# Local copy of a third-party hotspot script (see README: linked, not redistributed)
+adhocNetwork.sh
