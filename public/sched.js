@@ -14,15 +14,18 @@
 // Works in the browser (global createScheduler) and in Node (module.exports) so it can
 // be tested with a fake clock.
 (function (root) {
-  function createScheduler({ now, setTimeout, clearTimeout, show, windowMs = 15000 }) {
+  function createScheduler({ now, setTimeout, clearTimeout, show, windowMs = 15000, trackStats = false }) {
     let samples = [];     // monotonic deque: {t: local time, d: local - host}, d strictly increasing
     let queue = [];       // pending beats, sorted by `at`: {at, msg}
     let timer = null;
     let stats;
     resetStats();
 
+    // slack/delay (used only for the debug overlay's percentiles) are kept just when asked for
+    // (trackStats), so a client not being watched doesn't grow and periodically trim arrays for
+    // no reason. late/n are cheap counters and are always kept.
     function resetStats() { stats = { slack: [], delay: [], late: 0, n: 0 }; }
-    const cap = a => { if (a.length > 40000) a.splice(0, 20000); };
+    const cap = a => { if (a.length > 4000) a.splice(0, 2000); };
 
     const offset = () => (samples.length ? samples[0].d : 0);
     const hostNow = () => now() - offset();
@@ -33,7 +36,7 @@
       while (samples.length && samples[samples.length - 1].d >= d) samples.pop();
       samples.push({ t, d });
       while (samples.length && samples[0].t < t - windowMs) samples.shift();
-      stats.delay.push(Math.max(0, d - offset())); cap(stats.delay);
+      if (trackStats) { stats.delay.push(Math.max(0, d - offset())); cap(stats.delay); }
       if (queue.length) pump(); // the estimate may have moved
     }
 
@@ -50,7 +53,7 @@
     function enqueue(msg) {
       const slack = msg.at - hostNow();          // <0 means it arrived after it was due
       stats.n++; if (slack < 0) stats.late++;
-      stats.slack.push(slack); cap(stats.slack);
+      if (trackStats) { stats.slack.push(slack); cap(stats.slack); }
       let i = queue.length;
       while (i > 0 && queue[i - 1].at > msg.at) i--;
       queue.splice(i, 0, { at: msg.at, msg });

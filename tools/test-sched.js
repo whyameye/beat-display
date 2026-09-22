@@ -104,5 +104,37 @@ const check = (ok, what) => { if (!ok) { fail++; console.log('  FAIL:', what); }
   check(s.pending() === 0 && shown.join() === 'b', 'cut(0) drops everything without showing');
 }
 
+// 5. Late joiner: the very first sample is noisy (a phone that just associated to WiFi), but the
+// server's post-connect burst of quick follow-up pings should correct the offset estimate fast
+// enough that a beat enqueued right at join still displays close to its true due time.
+{
+  let t = 0;
+  const events = []; const at = (tt, fn) => events.push({ t: tt, fn });
+  let tid = 0; const timers = new Map();
+  const shown = [];
+  const HOST_OFFSET = 5000;                          // true (unknown to the client) clock offset
+  const hostAt = local => local - HOST_OFFSET;        // host-clock value of a given local time
+  const s = createScheduler({
+    now: () => t,
+    setTimeout: (fn, ms) => { const id = ++tid; timers.set(id, true); at(t + ms, () => { if (timers.get(id)) { timers.delete(id); fn(); } }); return id; },
+    clearTimeout: id => timers.delete(id),
+    show: m => shown.push({ t, id: m.id }),
+  });
+  // t=0: the only message so far is delayed 400 ms (cold WiFi association) -> offset overestimated
+  // by 400 ms. It also carries a beat truly due 300 ms from now.
+  at(0, () => { s.observe(hostAt(0) - 400); s.enqueue({ id: 'x', at: hostAt(300) }); });
+  // t=5,10,...,25: the server's settle-ping burst, each with normal ~2 ms delay
+  for (const dt of [5, 10, 15, 20, 25]) at(dt, () => s.observe(hostAt(dt) - 2));
+  for (;;) {
+    events.sort((a, b) => a.t - b.t);
+    const e = events.shift();
+    if (!e || e.t > 400) break;
+    t = e.t; e.fn();
+  }
+  const got = shown[0];
+  check(shown.length === 1 && Math.abs(got.t - 300) <= 5,
+    `late joiner recovers from a noisy first sample (showed at t=${got ? got.t.toFixed(1) : 'never'}, true due 300)`);
+}
+
 console.log(fail ? `\n${fail} FAILED` : '\nall passed');
 process.exit(fail ? 1 : 0);

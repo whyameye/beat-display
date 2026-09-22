@@ -29,6 +29,10 @@ const SPEED = Number(arg('speed', 1));
 const BEATS_FILE = path.resolve(__dirname, arg('beats', 'beats.json'));
 const HB_MS = Number(arg('hb', 100));
 const LEAD_MS = Number(arg('lead', 1000));
+// WiFi QR code (join-network, not the page URL): macOS won't hand us a saved WiFi password
+// without an interactive Keychain prompt, so it has to come from a flag or the "w" command.
+let wifiSsid = arg('ssid', null);
+let wifiPass = arg('wifi-pass', null);
 const END_HOLD_S = 2; // real seconds the last beat stays up before "END"
 if (!(SPEED > 0)) { console.error('--speed must be > 0'); process.exit(1); }
 
@@ -97,6 +101,14 @@ wss.on('connection', (ws, req) => {
   ws.send(wire(shownObj(pos))); // late joiner / reconnect: show where we are right now...
   const t = hostMs();
   for (const a of ahead) if (a.at > t) ws.send(wire(a.obj)); // ...plus beats already sent but not yet due
+  // A brand-new client has only the message(s) above to estimate the host's clock from, and
+  // those can carry unusually high delay (a phone that just associated to WiFi, in particular).
+  // A few extra pings spread over the next ~150 ms give its estimate several more chances to
+  // land on a low-delay sample quickly, instead of waiting on the ~100 ms heartbeat cadence —
+  // so anything already queued (the "ahead" beats above) corrects itself fast if it started off biased.
+  for (let k = 1; k <= 5; k++) {
+    setTimeout(() => { if (ws.readyState === 1) ws.send(wire({ hb: 1 })); }, k * 30);
+  }
   log(`+ client ${ip} connected (${wss.clients.size} total)`);
   ws.on('close', () => log(`- client ${ip} disconnected (${wss.clients.size} total)`));
   ws.on('error', () => {});
@@ -248,7 +260,8 @@ function help() {
   j N [M]          jump to movement N, optionally measure M of it
   m M              jump to measure M of the current movement
   l                list movements
-  u                show URL(s) + QR code again
+  u                show page URL(s) + QR code again
+  w                show WiFi join QR (asks for SSID/password once, if not set via flags below)
   h                this help        q   quit
 
 Settings now: port ${PORT}, lead ${LEAD_MS} ms, heartbeat ${HB_MS} ms, speed x${SPEED}
@@ -259,6 +272,7 @@ To change them, quit (q) and restart with options (they can be combined):
   --hb 50          heartbeat period in ms (default 100)
   --speed 10       simulation: play 10x faster (default 1)
   --beats FILE     use a different beats file (default beats.json)
+  --ssid NAME --wifi-pass PASSWORD    pre-set the WiFi QR (type "w" to set it live instead)
   e.g.  node server.js --lead 2000 --port 9000
         npm start -- --lead 2000        (via npm: note the extra --)
 
@@ -296,6 +310,32 @@ function showUrls() {
     `\n\nQR for ${urls[0].url}\n${code}`));
 }
 
+// Standard "join this WiFi network" QR format — recognized directly by the iOS and Android
+// camera apps, no app install needed. Special characters in the SSID/password need escaping.
+const escWifi = s => s.replace(/([\\;,":])/g, '\\$1');
+const wifiPayload = (ssid, pass) => pass
+  ? `WIFI:T:WPA;S:${escWifi(ssid)};P:${escWifi(pass)};H:false;;`
+  : `WIFI:T:nopass;S:${escWifi(ssid)};;`;
+
+function showWifiQr() {
+  if (!wifiSsid) return console.log('No WiFi network set. Type "w" to set it, or restart with --ssid NAME --wifi-pass PASSWORD.');
+  qrcode.generate(wifiPayload(wifiSsid, wifiPass), { small: true }, code =>
+    console.log(`WiFi QR for "${wifiSsid}"${wifiPass ? '' : ' (open network, no password)'} — scan with a phone camera to join:\n${code}`));
+}
+
+function setWifi() {
+  if (!rl) return emit('No WiFi set. Restart with --ssid NAME --wifi-pass PASSWORD to set this non-interactively.');
+  rl.question('WiFi network name (SSID): ', ssid => {
+    ssid = ssid.trim();
+    if (!ssid) { console.log('No SSID entered.'); rl.prompt(true); return; }
+    rl.question('WiFi password (blank if open network): ', pass => {
+      wifiSsid = ssid; wifiPass = pass.trim() || null;
+      showWifiQr();
+      rl.prompt(true);
+    });
+  });
+}
+
 function handle(line) {
   const [cmd, ...a] = line.trim().toLowerCase().split(/\s+/);
   switch (cmd) {
@@ -319,6 +359,7 @@ function handle(line) {
     }
     case 'l': case 'list': listMovements(); break;
     case 'u': case 'url': showUrls(); break;
+    case 'w': case 'wifi': wifiSsid ? showWifiQr() : setWifi(); break;
     case 'h': case '?': case 'help': help(); break;
     case 'q': case 'quit': case 'exit': shutdown(); break;
     default: log(`unknown command "${cmd}" — "h" for help`);
@@ -349,6 +390,7 @@ server.listen(PORT, '0.0.0.0', () => { // 0.0.0.0, NOT 127.0.0.1: must be reacha
   console.log(`sending beats ${LEAD_MS} ms ahead; heartbeat every ${HB_MS} ms`);
   if (SPEED !== 1) console.log(`*** SIMULATION: playing at ${SPEED}x speed ***`);
   showUrls();
+  if (wifiSsid) { console.log(''); showWifiQr(); }
   console.log('');
   help();
   console.log('');

@@ -41,6 +41,7 @@ Options (quit with `q` and restart to change them; `npm start -- --lead 2000` pa
     --hb 50         heartbeat period in ms (default 100)
     --speed 10      simulation: play 10x faster
     --beats FILE    beats file (default beats.json)
+    --ssid NAME --wifi-pass PASSWORD    pre-set the WiFi join QR (or set it live with "w")
 
 ### Host commands (type + Enter)
 
@@ -49,7 +50,11 @@ Options (quit with `q` and restart to change them; `npm start -- --lead 2000` pa
     r         rewind to START (stopped)
     j N [M]   jump to movement N (optionally measure M); keeps playing if it was playing
     m M       jump to measure M of the current movement
-    l         list movements      u   URL + QR      h   help      q   quit
+    l         list movements      u   page URL + QR      h   help      q   quit
+    w         show a WiFi join QR code (scannable by a phone's camera app, no app needed);
+              asks for the network name and password once if not set via --ssid/--wifi-pass
+              (macOS won't hand a saved WiFi password to a script, so this can't be read
+              automatically — you type it once per host run, or pass it as a flag)
 
 ## Beats file
 

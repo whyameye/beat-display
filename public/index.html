@@ -151,18 +151,19 @@ function apply(m) {
   posEl.textContent = m.measure + ' / ' + m.beat;
 }
 
+// ---- ?debug: network timing overlay (measures only; never drives the display) ----
+const params = new URLSearchParams(location.search);
+const DEBUG = params.has('debug');
+const KA_MS = Number(params.get('ka') || 0);   // ?ka=50: send a tiny message to the host every 50 ms
+
 // ---- jitter buffer ----
 const sched = createScheduler({
   now: () => performance.now(),
   setTimeout: (f, ms) => window.setTimeout(f, ms),
   clearTimeout: id => window.clearTimeout(id),
   show: apply,
+  trackStats: DEBUG, // only bother keeping the overlay's history when it's actually on screen
 });
-
-// ---- ?debug: network timing overlay (measures only; never drives the display) ----
-const params = new URLSearchParams(location.search);
-const DEBUG = params.has('debug');
-const KA_MS = Number(params.get('ka') || 0);   // ?ka=50: send a tiny message to the host every 50 ms
 const dbgEl = $('dbg');
 function pctl(a, p) {
   if (!a.length) return '-';
